@@ -22,9 +22,20 @@
 
 package org.bytedeco.javacv;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.UnsupportedEncodingException;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedList;
+
+import org.bytedeco.javacpp.opencv_core.CvAttrList;
+import org.bytedeco.javacpp.opencv_core.CvFileStorage;
+import org.bytedeco.javacpp.opencv_core.FileStorage;
 
 import static org.bytedeco.javacpp.opencv_core.*;
 import static org.bytedeco.javacpp.opencv_imgproc.*;
@@ -397,23 +408,501 @@ public class ProCamGeometricCalibrator {
         return projectorPlane.getImage();
     }
 
+    
+    //Added by Liming
+    double[] setCornerByCenter(double x, double y)
+    {
+
+    	double[] corners = new double[8];
+        corners[0] = x; corners[1] = y;
+        corners[4] = x; corners[5] = y;
+        corners[2] = x; corners[3] = y;
+        corners[6] = x; corners[7] = y;
+        
+        return corners;
+    }
+    
+    boolean loadCornerData(String filename, final GeometricCalibrator cameraCalibrator, final GeometricCalibrator projectorCalibrator) throws NumberFormatException, IOException
+    {
+    	File file = new File(filename);
+    	BufferedReader reader = null;
+        reader = new BufferedReader(new FileReader(file));
+        String text = null;
+
+        int viewNum;
+    	LinkedList<Marker[]>  allDistortedProjectedMarkersViewByCamera = new LinkedList<Marker[]>(),
+    			allProjectorImageMarkers = new LinkedList<Marker[]>(),
+    		    allDistortedImagedBoardMarkers = new LinkedList<Marker[]>(),
+    		    allBoardObjectMarkers = new LinkedList<Marker[]>();
+    		    
+    	System.out.println("Start loading rawdata ...");
+        if ((text = reader.readLine()) != null)
+        {
+        	viewNum = Integer.parseInt(text);
+        }
+        else
+        {
+        	reader.close();
+        	return false;
+        }
+        
+        System.out.println("View number = " + viewNum);
+        int pointnum, checksum;
+//        double[] refCenter = new double[2];
+//        double[] imagedCenter = new double[2];
+        double[] refCorner = new double[8];
+        double[] imgCorner = new double[8];
+        for (int i = 0 ; i < viewNum ; i++)
+        {
+        	//For imaged board points
+            if ((text = reader.readLine()) != null)
+            {
+            	String[] numbers = text.split(" ");
+            	pointnum = Integer.parseInt(numbers[0]);
+            	checksum = Integer.parseInt(numbers[1]);
+            	
+            	System.out.println("pointnum = " + pointnum);
+            }
+            else
+            {
+            	reader.close();
+            	return false;
+            }
+            
+    		if (checksum != i*10 + 0)
+    		{
+    			System.out.println("The check sum is not correct: " + checksum + "!=" + (i*10+0));
+    			reader.close();
+    			return false;
+    		}
+    		
+        	Marker[] cameraObjectMarkers = new Marker[pointnum];
+        	Marker[] cameraImageMarkers = new Marker[pointnum];
+    		
+            for (int j = 0 ; j < pointnum ; j++)
+            {
+                if ((text = reader.readLine()) != null)
+                {
+                	//read centers
+                	String[] numbers = text.split(" ");
+                	for (int k = 0 ; k < 8 ; k++)
+                	{
+                		refCorner[k] = Double.parseDouble(numbers[k]);
+                	}
+                	
+                	for (int k = 0 ; k < 8 ; k++)
+                	{
+                		imgCorner[k] = Double.parseDouble(numbers[k+8]);
+                	}
+                	
+                	cameraObjectMarkers[j] = new Marker(j, refCorner.clone());
+                	cameraImageMarkers[j] = new Marker(j, imgCorner.clone());
+                }
+                else
+                {
+                	reader.close();
+                	return false;
+                }
+            }
+            
+            //For imaged projected points
+            if ((text = reader.readLine()) != null)
+            {
+            	String[] numbers = text.split(" ");
+            	pointnum = Integer.parseInt(numbers[0]);
+            	checksum = Integer.parseInt(numbers[1]);
+            }
+            else
+            {
+            	reader.close();
+            	return false;
+            }
+            
+    		if (checksum != i*10 + 1)
+    		{
+    			System.out.println("The check sum is not correct: " + checksum + "!=" + (i*10+0));
+    			reader.close();
+    			return false;
+    		}
+    		
+        	Marker[] projectorImageMarkers = new Marker[pointnum];
+        	Marker[] projectedMarkersViewedByCam = new Marker[pointnum];
+    		
+            for (int j = 0 ; j < pointnum ; j++)
+            {
+                if ((text = reader.readLine()) != null)
+                {
+                	//read centers
+                	String[] numbers = text.split(" ");
+                	for (int k = 0 ; k < 8 ; k++)
+                	{
+                		refCorner[k] = Double.parseDouble(numbers[k]);
+                	}
+                	
+                	for (int k = 0 ; k < 8 ; k++)
+                	{
+                		imgCorner[k] = Double.parseDouble(numbers[k+8]);
+                	}
+                	
+                	//create markers
+                	projectorImageMarkers[j] = new Marker(j, refCorner.clone());
+                	projectedMarkersViewedByCam[j] = new Marker(j, imgCorner.clone());
+                }
+                else
+                {
+                	reader.close();
+                	return false;
+                }
+            }
+            
+            //Add into the list
+        	allDistortedProjectedMarkersViewByCamera.add(projectedMarkersViewedByCam);
+        	allProjectorImageMarkers.add(projectorImageMarkers);
+        	allDistortedImagedBoardMarkers.add(cameraImageMarkers);
+        	allBoardObjectMarkers.add(cameraObjectMarkers);
+        }
+
+        reader.close();
+        
+        //Set into the camera and projector
+    	projectorCalibrator.setAllObjectMarkers(allDistortedProjectedMarkersViewByCamera);
+    	projectorCalibrator.setAllImageMarkers(allProjectorImageMarkers);
+    	cameraCalibrator.setAllImageMarkers(allDistortedImagedBoardMarkers);
+    	cameraCalibrator.setAllObjectMarkers(allBoardObjectMarkers);
+        
+    	System.out.println("Finish loading rawdata !");
+    	return true;
+    }
+
+    boolean loadCenterData(String filename, final GeometricCalibrator cameraCalibrator, final GeometricCalibrator projectorCalibrator) throws NumberFormatException, IOException
+    {
+    	File file = new File(filename);
+    	BufferedReader reader = null;
+        reader = new BufferedReader(new FileReader(file));
+        String text = null;
+
+        int viewNum;
+    	LinkedList<Marker[]>  allDistortedProjectedMarkersViewByCamera = new LinkedList<Marker[]>(),
+    			allProjectorImageMarkers = new LinkedList<Marker[]>(),
+    		    allDistortedImagedBoardMarkers = new LinkedList<Marker[]>(),
+    		    allBoardObjectMarkers = new LinkedList<Marker[]>();
+    		    
+    	System.out.println("Start loading rawdata ...");
+        if ((text = reader.readLine()) != null)
+        {
+        	viewNum = Integer.parseInt(text);
+        }
+        else
+        {
+        	reader.close();
+        	return false;
+        }
+        
+        System.out.println("View number = " + viewNum);
+        int pointnum, checksum;
+        double[] refCenter = new double[2];
+        double[] imagedCenter = new double[2];
+        for (int i = 0 ; i < viewNum ; i++)
+        {
+        	//For imaged board points
+            if ((text = reader.readLine()) != null)
+            {
+            	String[] numbers = text.split(" ");
+            	pointnum = Integer.parseInt(numbers[0]);
+            	checksum = Integer.parseInt(numbers[1]);
+            	
+            	System.out.println("pointnum = " + pointnum);
+            }
+            else
+            {
+            	reader.close();
+            	return false;
+            }
+            
+    		if (checksum != i*10 + 0)
+    		{
+    			System.out.println("The check sum is not correct: " + checksum + "!=" + (i*10+0));
+    			reader.close();
+    			return false;
+    		}
+    		
+        	Marker[] cameraObjectMarkers = new Marker[pointnum];
+        	Marker[] cameraImageMarkers = new Marker[pointnum];
+    		
+            for (int j = 0 ; j < pointnum ; j++)
+            {
+                if ((text = reader.readLine()) != null)
+                {
+                	//read centers
+                	String[] numbers = text.split(" ");
+                	
+                	refCenter[0] = Double.parseDouble(numbers[0]);
+                	refCenter[1] = Double.parseDouble(numbers[1]);         	
+                	imagedCenter[0] = Double.parseDouble(numbers[2]);
+                	imagedCenter[1] = Double.parseDouble(numbers[3]);          	
+                	System.out.println("read : " + Arrays.toString(refCenter) + " " + Arrays.toString(imagedCenter));
+                	
+                	//create markers
+                	cameraObjectMarkers[j] = new Marker(j, setCornerByCenter(refCenter[0], refCenter[1]));
+                	cameraImageMarkers[j] = new Marker(j, setCornerByCenter(imagedCenter[0], imagedCenter[1]));
+                }
+                else
+                {
+                	reader.close();
+                	return false;
+                }
+            }
+            
+            //For imaged projected points
+            if ((text = reader.readLine()) != null)
+            {
+            	String[] numbers = text.split(" ");
+            	pointnum = Integer.parseInt(numbers[0]);
+            	checksum = Integer.parseInt(numbers[1]);
+            }
+            else
+            {
+            	reader.close();
+            	return false;
+            }
+            
+    		if (checksum != i*10 + 1)
+    		{
+    			System.out.println("The check sum is not correct: " + checksum + "!=" + (i*10+0));
+    			reader.close();
+    			return false;
+    		}
+    		
+        	Marker[] projectorImageMarkers = new Marker[pointnum];
+        	Marker[] projectedMarkersViewedByCam = new Marker[pointnum];
+    		
+            for (int j = 0 ; j < pointnum ; j++)
+            {
+                if ((text = reader.readLine()) != null)
+                {
+                	//read centers
+                	String[] numbers = text.split(" ");
+                	
+                	refCenter[0] = Double.parseDouble(numbers[0]);
+                	refCenter[1] = Double.parseDouble(numbers[1]);
+                	imagedCenter[0] = Double.parseDouble(numbers[2]);
+                	imagedCenter[1] = Double.parseDouble(numbers[3]);
+                	System.out.println("read : " + Arrays.toString(refCenter) + " " + Arrays.toString(imagedCenter));
+                	
+                	//create markers
+              	
+                	projectorImageMarkers[j] = new Marker(j, setCornerByCenter(refCenter[0], refCenter[1]));
+                	projectedMarkersViewedByCam[j] = new Marker(j, setCornerByCenter(imagedCenter[0], imagedCenter[1]));
+                }
+                else
+                {
+                	reader.close();
+                	return false;
+                }
+            }
+            
+            //Add into the list
+        	allDistortedProjectedMarkersViewByCamera.add(projectedMarkersViewedByCam);
+        	allProjectorImageMarkers.add(projectorImageMarkers);
+        	allDistortedImagedBoardMarkers.add(cameraImageMarkers);
+        	allBoardObjectMarkers.add(cameraObjectMarkers);
+        }
+
+        reader.close();
+        
+        //Set into the camera and projector
+    	projectorCalibrator.setAllObjectMarkers(allDistortedProjectedMarkersViewByCamera);
+    	projectorCalibrator.setAllImageMarkers(allProjectorImageMarkers);
+    	cameraCalibrator.setAllImageMarkers(allDistortedImagedBoardMarkers);
+    	cameraCalibrator.setAllObjectMarkers(allBoardObjectMarkers);
+        
+    	System.out.println("Finish loading rawdata !");
+    	return true;
+    }
+    
+    public void saveCornerData(String filename, final GeometricCalibrator cameraCalibrator, final GeometricCalibrator projectorCalibrator)
+    {
+    	System.out.println("Start to print rawdata ...");
+    	
+    	PrintWriter writer = null;
+    	try {
+			writer = new PrintWriter(filename, "UTF-8");
+		} catch (FileNotFoundException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (UnsupportedEncodingException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+    	
+    	System.out.println("Start writing rawdata file ...");
+    	LinkedList<Marker[]>  allDistortedProjectedMarkersViewByCamera = projectorCalibrator.getAllObjectMarkers(),
+    			allProjectorImageMarkers = projectorCalibrator.getAllImageMarkers(),
+    		    allDistortedImagedBoardMarkers = cameraCalibrator.getAllImageMarkers(),
+    		    allBoardObjectMarkers = cameraCalibrator.getAllObjectMarkers();
+    			
+    	Iterator<Marker[]> itCameraObjectMarker = allBoardObjectMarkers.iterator();
+    	Iterator<Marker[]> itCameraImageMarker = allDistortedImagedBoardMarkers.iterator();
+    	Iterator<Marker[]> itProjectedMarkerViewedByCamera = allDistortedProjectedMarkersViewByCamera.iterator();  //projectedPattern view by the camera
+    	Iterator<Marker[]> itProjectorImageMarker = allProjectorImageMarkers.iterator();   //source projected pattern
+    	
+    	writer.println(allBoardObjectMarkers.size());
+    	
+    	int viewNum = 0;
+    	int pointnum, checksum;
+    	while(itCameraObjectMarker.hasNext())
+    	{
+            Marker[] cameraObjectMarkers = itCameraObjectMarker.next(),
+                     cameraImageMarkers = itCameraImageMarker.next(),
+                     projectedMarkersViewedByCam = itProjectedMarkerViewedByCamera.next(),
+                     projectorImageMarkers = itProjectorImageMarker.next();
+            
+            pointnum = cameraObjectMarkers.length; checksum = viewNum*10 + 0;
+    		writer.println(pointnum + " " + checksum);
+            for (int i = 0; i < cameraObjectMarkers.length; i++) {
+            	double [] objectCorner = cameraObjectMarkers[i].corners;
+            	double [] imageCorner = cameraImageMarkers[i].corners;
+            	writer.println(
+            			objectCorner[0] + " " + objectCorner[1] + " " 
+            			+ objectCorner[2] + " " + objectCorner[3] + " "
+            			+ objectCorner[4] + " " + objectCorner[5] + " "
+            			+ objectCorner[6] + " " + objectCorner[7] + " "
+            			+ imageCorner[0] + " " + imageCorner[1] + " "
+            			+ imageCorner[2] + " " + imageCorner[3] + " "
+            			+ imageCorner[4] + " " + imageCorner[5] + " "
+            			+ imageCorner[6] + " " + imageCorner[7]);
+            }
+            
+            pointnum = projectedMarkersViewedByCam.length; checksum = viewNum*10 + 1;
+            writer.println(pointnum + " " + checksum);
+            for (int i = 0; i < projectedMarkersViewedByCam.length; i++) {
+            	double [] objectCorner = projectedMarkersViewedByCam[i].corners;
+            	double [] imageCorner = projectorImageMarkers[i].corners;
+            	//Note: we write the marker center in the projector image first
+            	writer.println(
+            			imageCorner[0] + " " + imageCorner[1] + " "
+            			+ imageCorner[2] + " " + imageCorner[3] + " "
+            			+ imageCorner[4] + " " + imageCorner[5] + " "
+            			+ imageCorner[6] + " " + imageCorner[7] + " "
+            			+ objectCorner[0] + " " + objectCorner[1] + " " 
+            			+ objectCorner[2] + " " + objectCorner[3] + " "
+            			+ objectCorner[4] + " " + objectCorner[5] + " "
+            			+ objectCorner[6] + " " + objectCorner[7]);
+            }
+            viewNum++;
+    	}
+    	
+    	writer.close();
+    	
+    	System.out.println("Finish printing rawdata !");
+    }
+    
+    public void saveCenterData(String filename, final GeometricCalibrator cameraCalibrator, final GeometricCalibrator projectorCalibrator)
+    {
+    	System.out.println("Start to print rawdata ...");
+    	
+    	PrintWriter writer = null;
+    	try {
+			writer = new PrintWriter(filename, "UTF-8");
+		} catch (FileNotFoundException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (UnsupportedEncodingException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+    	
+    	System.out.println("Start writing rawdata file ...");
+    	LinkedList<Marker[]>  allDistortedProjectedMarkersViewByCamera = projectorCalibrator.getAllObjectMarkers(),
+    			allProjectorImageMarkers = projectorCalibrator.getAllImageMarkers(),
+    		    allDistortedImagedBoardMarkers = cameraCalibrator.getAllImageMarkers(),
+    		    allBoardObjectMarkers = cameraCalibrator.getAllObjectMarkers();
+    			
+    	Iterator<Marker[]> itCameraObjectMarker = allBoardObjectMarkers.iterator();
+    	Iterator<Marker[]> itCameraImageMarker = allDistortedImagedBoardMarkers.iterator();
+    	Iterator<Marker[]> itProjectedMarkerViewedByCamera = allDistortedProjectedMarkersViewByCamera.iterator();  //projectedPattern view by the camera
+    	Iterator<Marker[]> itProjectorImageMarker = allProjectorImageMarkers.iterator();   //source projected pattern
+    	
+    	writer.println(allBoardObjectMarkers.size());
+    	
+    	int viewNum = 0;
+    	int pointnum, checksum;
+    	while(itCameraObjectMarker.hasNext())
+    	{
+            Marker[] cameraObjectMarkers = itCameraObjectMarker.next(),
+                     cameraImageMarkers = itCameraImageMarker.next(),
+                     projectedMarkersViewedByCam = itProjectedMarkerViewedByCamera.next(),
+                     projectorImageMarkers = itProjectorImageMarker.next();
+            
+            pointnum = cameraObjectMarkers.length; checksum = viewNum*10 + 0;
+    		writer.println(pointnum + " " + checksum);
+            for (int i = 0; i < cameraObjectMarkers.length; i++) {
+            	double [] objectCenter = cameraObjectMarkers[i].getCenter();
+            	double [] imageCenter = cameraImageMarkers[i].getCenter();
+            	writer.println(objectCenter[0] + " " + objectCenter[1] + " " + imageCenter[0] + " " + imageCenter[1]);
+            }
+            
+            pointnum = projectedMarkersViewedByCam.length; checksum = viewNum*10 + 1;
+            writer.println(pointnum + " " + checksum);
+            for (int i = 0; i < projectedMarkersViewedByCam.length; i++) {
+            	double [] objectCenter = projectedMarkersViewedByCam[i].getCenter();
+            	double [] imageCenter = projectorImageMarkers[i].getCenter();
+            	//Note: we write the marker center in the projector image first
+            	writer.println(imageCenter[0] + " " + imageCenter[1] + " " + objectCenter[0] + " " + objectCenter[1]);
+            }
+            viewNum++;
+    	}
+    	
+    	writer.close();
+    	
+    	System.out.println("Finish printing rawdata !");
+    }
+    
     public double[] calibrate(boolean useCenters, boolean calibrateCameras) {
         return calibrate(useCenters, calibrateCameras);
     }
+    
     @SuppressWarnings("unchecked")
     public double[] calibrate(boolean useCenters, boolean calibrateCameras, int cameraAtOrigin) {
         GeometricCalibrator calibratorAtOrigin = cameraCalibrators[cameraAtOrigin];
 
+        //Liming added
+        {
+        	System.out.println("Start to register rawdata (cameraCalibrators.length = " + cameraCalibrators.length + ") ...");
+	        if (cameraCalibrators.length == 1) {
+	        	try {
+					loadCenterData("input_rawdata.txt", cameraCalibrators[0], projectorCalibrator);
+				} catch (NumberFormatException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (IOException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+	        	
+	        	saveCenterData("rawdatatext.txt", cameraCalibrators[0], projectorCalibrator);
+	        }
+	        else
+	        {
+	        	System.out.println("Problem in registering rawdata! ");
+	        }
+        }
+        
+    	System.out.println("Camera : " + cameraCalibrators[0].getAllObjectMarkers().size() + ", " + cameraCalibrators[0].getAllImageMarkers().size());
+    	System.out.println("Projector : " + projectorCalibrator.getAllObjectMarkers().size() + ", " + projectorCalibrator.getAllImageMarkers().size());
+        //End added
+    	
         // calibrate camera if not already calibrated...
         if (calibrateCameras) {
             for (int cameraNumber = 0; cameraNumber < cameraCalibrators.length; cameraNumber++) {
+            	System.out.println("Now calibrate camera " + cameraNumber);
                 cameraCalibrators[cameraNumber].calibrate(useCenters);
                 if (cameraCalibrators[cameraNumber] != calibratorAtOrigin) {
                     calibratorAtOrigin.calibrateStereo(useCenters, cameraCalibrators[cameraNumber]);
                 }
             }
         }
-
+        
         // remove distortion from corners of imaged markers for projector calibration
         // (in the case of the projector, markers imaged by the cameras, that is
         // those affected by their distortions, are the "object" markers, but
@@ -423,11 +912,15 @@ public class ProCamGeometricCalibrator {
                              distortedProjectorMarkersAtOrigin = new LinkedList<Marker[]>(),
                              allUndistortedProjectorMarkers = new LinkedList<Marker[]>(),
                              undistortedProjectorMarkersAtOrigin = new LinkedList<Marker[]>();
+                             
         Iterator<Marker[]> ip = allDistortedProjectorMarkers.iterator();
         // "unchecked" warning here
-        Iterator<Marker[]>[] ib = new Iterator[cameraCalibrators.length];
+        Iterator<Marker[]>[] ib = new Iterator[cameraCalibrators.length],
+        		ibobj = new Iterator[cameraCalibrators.length];
         for (int cameraNumber = 0; cameraNumber < cameraCalibrators.length; cameraNumber++) {
-            ib[cameraNumber] = allImagedBoardMarkers[cameraNumber].iterator();
+//            ib[cameraNumber] = allImagedBoardMarkers[cameraNumber].iterator();   //Liming: Problem with allImageBoardMarkers here
+        	ib[cameraNumber] = cameraCalibrators[cameraNumber].getAllImageMarkers().iterator(); 
+        	ibobj[cameraNumber] = cameraCalibrators[cameraNumber].getAllObjectMarkers().iterator();
         }
 
         // iterate over all the saved markers in the right order...
@@ -437,8 +930,9 @@ public class ProCamGeometricCalibrator {
                 double maxError = settings.prewarpUpdateErrorMax *
                         (cameraCalibrators[cameraNumber].getProjectiveDevice().imageWidth+
                          cameraCalibrators[cameraNumber].getProjectiveDevice().imageHeight)/2;
-
-                Marker[] distortedBoardMarkers = ib[cameraNumber].next(),
+                
+                Marker[] boardMarkers = ibobj[cameraNumber].next(),
+                		 distortedBoardMarkers = ib[cameraNumber].next(),
                          distortedProjectorMarkers = ip.next(),
                          undistortedBoardMarkers = new Marker[distortedBoardMarkers.length],
                          undistortedProjectorMarkers = new Marker[distortedProjectorMarkers.length];
@@ -452,12 +946,16 @@ public class ProCamGeometricCalibrator {
                     Marker m = undistortedProjectorMarkers[i] = distortedProjectorMarkers[i].clone();
                     m.corners = cameraCalibrators[cameraNumber].getProjectiveDevice().undistort(m.corners);
                 }
-
+                
+                // Estimate the homography(boardWarp[cameraNumber]) camera-board, using unditorted board markers
                 // remove linear distortion/warping of camera imaged markers from
                 // the projector, to get their physical location on the board
-                if (boardPlane.getTotalWarp(undistortedBoardMarkers, boardWarp[cameraNumber]) > maxError) {
+                if (boardPlane.getTotalWarp(boardMarkers, undistortedBoardMarkers, boardWarp[cameraNumber]) > maxError) {
+//                if (boardPlane.getTotalWarp(undistortedBoardMarkers, boardWarp[cameraNumber]) > maxError) {
                     assert(false);
                 }
+                
+                //boardWarp[cameraNumber] = homography
                 cvInvert(boardWarp[cameraNumber], boardWarp[cameraNumber]);
                 Marker.applyWarp(undistortedProjectorMarkers, boardWarp[cameraNumber]);
 
@@ -475,6 +973,7 @@ public class ProCamGeometricCalibrator {
 
         // calibrate projector
         projectorCalibrator.setAllObjectMarkers(allUndistortedProjectorMarkers);
+        System.out.println("Now calibrate projector...");
         double[] reprojErr = projectorCalibrator.calibrate(useCenters);
 //        projectorCalibrator.getProjectiveDevice().nominalDistance =
 //                projectorCalibrator.getProjectiveDevice().getNominalDistance(boardPlane);

@@ -26,6 +26,10 @@ import static org.bytedeco.javacpp.opencv_calib3d.*;
 import static org.bytedeco.javacpp.opencv_core.*;
 import static org.bytedeco.javacpp.opencv_imgproc.*;
 
+import java.io.FileNotFoundException;
+import java.io.PrintWriter;
+import java.io.UnsupportedEncodingException;
+
 /**
  *
  * @author Samuel Audet
@@ -194,6 +198,80 @@ public class MarkedPlane {
             }
         }
 
+        if (numPoints > 4 || (srcPts.rows() == 4 && numPoints == 4)) {
+            // compute homography ... should we use a robust method?
+            srcPts.rows(numPoints); dstPts.rows(numPoints);
+            if (numPoints == 4) {
+                JavaCV.getPerspectiveTransform(srcPts.get(), dstPts.get(), totalWarp);
+            } else {
+                cvFindHomography(srcPts, dstPts, totalWarp);
+            }
+
+            // compute transformed source<->dest RMSE
+            srcPts.cols(1); srcPts.type(CV_64F, 2);
+            dstPts.cols(1); dstPts.type(CV_64F, 2);
+            cvPerspectiveTransform(srcPts, srcPts, totalWarp);
+            srcPts.cols(2); srcPts.type(CV_64F, 1);
+            dstPts.cols(2); dstPts.type(CV_64F, 1);
+
+            rmse = 0;
+            for (int i = 0; i < numPoints; i++) {
+                double dx = dstPts.get(i*2  )-srcPts.get(i*2  );
+                double dy = dstPts.get(i*2+1)-srcPts.get(i*2+1);
+                rmse += dx*dx+dy*dy;
+            }
+            rmse = Math.sqrt(rmse/numPoints);
+//            System.out.println(rmse);
+
+            if (prewarp != null) {
+                // remove pre-warp from total warp
+                CvMat tempWarp = tempWarp3x3.get();
+                cvInvert(prewarp, tempWarp);
+                cvMatMul(totalWarp, tempWarp, totalWarp);
+            }
+//            System.out.println("totalWarp:\n" + totalWarp);
+        }
+        return rmse;
+    }
+    
+    public double getTotalWarp(Marker[] objectMarkers, Marker[] imagedMarkers, CvMat totalWarp) {
+    	
+    	boolean useCenters = true;
+    	System.out.println("Use center for homography estimation = " + useCenters);
+    	double rmse = Double.POSITIVE_INFINITY;
+        int pointsPerMarker = useCenters ? 1 : 4;
+
+        CvMat srcPts = localSrcPts.get(); srcPts.rows(objectMarkers.length*pointsPerMarker);
+        CvMat dstPts = localDstPts.get(); dstPts.rows(imagedMarkers.length*pointsPerMarker);
+
+    	PrintWriter writer = null;
+    	try {
+			writer = new PrintWriter("wrap.log", "UTF-8");
+		} catch (FileNotFoundException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (UnsupportedEncodingException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+    	
+        int numPoints = 0;
+        writer.println("New array : length = " + objectMarkers.length);
+        for (int i = 0 ; i < objectMarkers.length ; i++)
+        {
+        	writer.println(objectMarkers[i].toString() + " " + imagedMarkers[i].toString());
+            if (useCenters) {
+                srcPts.put(numPoints*2, objectMarkers[i].getCenter());
+                dstPts.put(numPoints*2, imagedMarkers[i].getCenter());
+            } else {
+                srcPts.put(numPoints*2, objectMarkers[i].corners);
+                dstPts.put(numPoints*2, imagedMarkers[i].corners);
+            }
+            numPoints += pointsPerMarker;
+        }
+
+        writer.close();
+        
         if (numPoints > 4 || (srcPts.rows() == 4 && numPoints == 4)) {
             // compute homography ... should we use a robust method?
             srcPts.rows(numPoints); dstPts.rows(numPoints);

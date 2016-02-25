@@ -62,7 +62,7 @@ public class Marker implements Cloneable {
         }
         return false;
     }
-
+    
     public double[] getCenter() {
         double x = 0, y = 0;
 if (true) {

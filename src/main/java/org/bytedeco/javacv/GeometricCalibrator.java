@@ -27,6 +27,7 @@ import java.nio.IntBuffer;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedList;
+
 import org.bytedeco.javacv.ProjectiveDevice.CalibrationSettings;
 
 import static org.bytedeco.javacpp.opencv_calib3d.*;
@@ -323,6 +324,8 @@ public class GeometricCalibrator {
         ProjectiveDevice d = projectiveDevice;
         CalibrationSettings dsettings = (CalibrationSettings)d.getSettings();
 
+        System.out.println("Calibrate " + dsettings.name + " with view number " + allImageMarkers.size());
+        
         if (d.cameraMatrix == null) {
             d.cameraMatrix = CvMat.create(3, 3);
             cvSetZero(d.cameraMatrix);
@@ -347,6 +350,7 @@ public class GeometricCalibrator {
         cvGetCols(d.extrParams, transVects, 3, 6);
 
         CvMat[] points = getPoints(useCenters);
+
         cvCalibrateCamera2(points[0], points[1], points[2],
                 cvSize(d.imageWidth, d.imageHeight),
                 d.cameraMatrix, d.distortionCoeffs,
